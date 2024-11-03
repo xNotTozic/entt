@@ -51,11 +51,11 @@ class basic_any {
 
     struct storage_type {
         // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays, modernize-avoid-c-arrays)
-        alignas(Align) std::byte data[Len + !Len];
+        alignas(Align) std::byte data[Len + static_cast<std::size_t>(Len == 0u)];
     };
 
     template<typename Type>
-    static constexpr bool in_situ = Len && alignof(Type) <= Align && sizeof(Type) <= Len && std::is_nothrow_move_constructible_v<Type>;
+    static constexpr bool in_situ = (Len != 0u) && alignof(Type) <= Align && sizeof(Type) <= Len && std::is_nothrow_move_constructible_v<Type>;
 
     template<typename Type>
     static const void *basic_vtable(const operation op, const basic_any &value, const void *other) {
@@ -132,6 +132,7 @@ class basic_any {
                 if constexpr(std::is_aggregate_v<plain_type> && (sizeof...(Args) != 0u || !std::is_default_constructible_v<plain_type>)) {
                     ::new(&storage) plain_type{std::forward<Args>(args)...};
                 } else {
+                    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay)
                     ::new(&storage) plain_type(std::forward<Args>(args)...);
                 }
             } else {
@@ -213,7 +214,7 @@ public:
     }
 
     /*! @brief Frees the internal storage, whatever it means. */
-    ~basic_any() noexcept {
+    ~basic_any() {
         if(vtable && (mode == any_policy::owner)) {
             vtable(operation::destroy, *this, nullptr);
         }
@@ -340,9 +341,9 @@ public:
         if(vtable && mode != any_policy::cref && *info == *other.info) {
             if(auto *val = other.data(); val) {
                 return (vtable(operation::transfer, *this, val) != nullptr);
-            } else {
-                return (vtable(operation::assign, *this, std::as_const(other).data()) != nullptr);
             }
+
+            return (vtable(operation::assign, *this, std::as_const(other).data()) != nullptr);
         }
 
         return false;
@@ -431,7 +432,7 @@ private:
  * @return The element converted to the requested type.
  */
 template<typename Type, std::size_t Len, std::size_t Align>
-[[nodiscard]] Type any_cast(const basic_any<Len, Align> &data) noexcept {
+[[nodiscard]] std::remove_const_t<Type> any_cast(const basic_any<Len, Align> &data) noexcept {
     const auto *const instance = any_cast<std::remove_reference_t<Type>>(&data);
     ENTT_ASSERT(instance, "Invalid instance");
     return static_cast<Type>(*instance);
@@ -439,7 +440,7 @@ template<typename Type, std::size_t Len, std::size_t Align>
 
 /*! @copydoc any_cast */
 template<typename Type, std::size_t Len, std::size_t Align>
-[[nodiscard]] Type any_cast(basic_any<Len, Align> &data) noexcept {
+[[nodiscard]] std::remove_const_t<Type> any_cast(basic_any<Len, Align> &data) noexcept {
     // forces const on non-reference types to make them work also with wrappers for const references
     auto *const instance = any_cast<std::remove_reference_t<const Type>>(&data);
     ENTT_ASSERT(instance, "Invalid instance");
@@ -448,13 +449,13 @@ template<typename Type, std::size_t Len, std::size_t Align>
 
 /*! @copydoc any_cast */
 template<typename Type, std::size_t Len, std::size_t Align>
-[[nodiscard]] Type any_cast(basic_any<Len, Align> &&data) noexcept {
+[[nodiscard]] std::remove_const_t<Type> any_cast(basic_any<Len, Align> &&data) noexcept {
     if constexpr(std::is_copy_constructible_v<std::remove_cv_t<std::remove_reference_t<Type>>>) {
         if(auto *const instance = any_cast<std::remove_reference_t<Type>>(&data); instance) {
             return static_cast<Type>(std::move(*instance));
-        } else {
-            return any_cast<Type>(data);
         }
+
+        return any_cast<Type>(data);
     } else {
         auto *const instance = any_cast<std::remove_reference_t<Type>>(&data);
         ENTT_ASSERT(instance, "Invalid instance");
